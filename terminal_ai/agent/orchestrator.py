@@ -1,35 +1,32 @@
 from terminal_ai.llm.ollama_provider import OllamaProvider
 from terminal_ai.tools.registry import TOOLS
 import json
-import os
 import re
+
+DECISION_MODEL = "qwen2.5:3b"  # fast, just picks a tool
+ANSWER_MODEL = "qwen2.5:3b"
+# ANSWER_MODEL = "llama3.2"      # full quality for final answer
 
 provider = OllamaProvider()
 
 
 def extract_json(text: str) -> str:
-    """
-    Strips markdown fences and extracts the first {...} JSON object found.
-    Much more robust than just removing backticks.
-    """
     text = text.strip()
-
-    # Remove ```json ... ``` or ``` ... ``` fences
     text = re.sub(r"```[a-zA-Z]*\n?", "", text)
     text = text.replace("```", "").strip()
 
-    # Extract the first {...} block (handles extra prose before/after JSON)
-    match = re.search(r"\{.*?\}", text, re.DOTALL)
+    # Greedy match handles multiline JSON
+    match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
-        return match.group(0)
+        raw = match.group(0)
+        # Strip characters that are never valid in JSON
+        raw = re.sub(r"(?<![\"\\])~", "", raw)
+        return raw
 
-    return text  # fall through and let json.loads raise the error
+    return text
 
 
 def is_likely_file(path: str) -> bool:
-    """
-    Heuristic: treat as file if it has an extension (but not just a lone dot).
-    """
     return "." in path and path != "."
 
 
@@ -45,7 +42,7 @@ def run_chat():
             break
 
         # -------------------------
-        # STEP 1: TOOL DECISION
+        # STEP 1: TOOL DECISION (fast model)
         # -------------------------
         tool_prompt = f"""
 You are a strict AI agent.
@@ -53,29 +50,32 @@ You are a strict AI agent.
 You MUST output ONLY valid JSON — no explanation, no markdown, no extra text.
 
 TOOLS:
-- list_dir(path) → use ONLY for folders/directories
-- read_file(path) → use ONLY for files (.py, .txt, .md, etc.)
-- search(query)   → use for web/knowledge queries
-- none            → use when no tool is needed
+- list_dir(path)       → list contents of a directory
+- read_file(path)      → read a specific file by path
+- search(query)        → search the web for external knowledge
+- ask_codebase(query)  → answer questions about THIS project's code and structure
+- none                 → no tool needed, answer directly
 
-CRITICAL RULES:
-- If the path has a file extension (.py, .txt, .md, etc.), ALWAYS use read_file
-- If the path is a directory, use list_dir
-- NEVER use list_dir on a file path
-- If no tool is needed, use "none"
+RULES:
+- Use ask_codebase for ANY question about how the code works, where something is defined, or what a module does
+- Use read_file only when the user gives a specific file path
+- Use list_dir only for exploring directory structure
+- Use search for external/web knowledge
+- Use none for greetings, math, or general knowledge questions
 
 Respond with ONLY this JSON and nothing else:
 {{
-  "tool": "list_dir | read_file | search | none",
+  "tool": "list_dir | read_file | search | ask_codebase | none",
   "input": "string"
 }}
 
 User request: {user_input}
 """
 
-        decision = provider.chat([
-            {"role": "user", "content": tool_prompt}
-        ])
+        decision = provider.chat(
+            [{"role": "user", "content": tool_prompt}],
+            model=DECISION_MODEL  # fast model for tool picking
+        )
 
         print("\nDEBUG RAW MODEL OUTPUT:\n", decision, "\n")
 
@@ -127,7 +127,7 @@ User request: {user_input}
                 continue
 
             # -------------------------
-            # STEP 6: FINAL RESPONSE
+            # STEP 6: FINAL RESPONSE (full model)
             # -------------------------
             final_prompt = f"""
 User request: {user_input}
@@ -141,16 +141,18 @@ Tool result:
 Now explain this clearly and helpfully.
 """
 
-            response = provider.chat([
-                {"role": "user", "content": final_prompt}
-            ])
+            response = provider.chat(
+                [{"role": "user", "content": final_prompt}],
+                model=ANSWER_MODEL  # full model for quality answers
+            )
 
             print("\nAI:", response, "\n")
 
         else:
 
-            response = provider.chat([
-                {"role": "user", "content": user_input}
-            ])
+            response = provider.chat(
+                [{"role": "user", "content": user_input}],
+                model=ANSWER_MODEL  # full model for quality answers
+            )
 
             print("\nAI:", response, "\n")
