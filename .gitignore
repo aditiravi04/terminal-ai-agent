@@ -1,3 +1,22 @@
-venv/
-.env
+# Python
 __pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# ChromaDB / memory data (local only, don't share)
+~/.terminal_ai/
+
+# IDE
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
+desktop.ini
