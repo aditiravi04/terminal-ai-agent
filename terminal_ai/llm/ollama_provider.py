@@ -1,22 +1,20 @@
 import requests
 
-from terminal_ai.llm.provider import LLMProvider
+class OllamaProvider:
 
+    def __init__(self, model="llama3.2"):
+        self.model = model
+        self.url = "http://localhost:11434/api/chat"
 
-class OllamaProvider(LLMProvider):
-
-    def generate(self, prompt):
+    def chat(self, messages):
 
         response = requests.post(
-            "http://localhost:11434/api/generate",
+            self.url,
             json={
-                "model": "llama3.2",
-                "prompt": prompt,
+                "model": self.model,
+                "messages": messages,
                 "stream": False
             }
         )
 
-        return response.json()["response"]
-    
-
-# talks to ollama
+        return response.json()["message"]["content"]
