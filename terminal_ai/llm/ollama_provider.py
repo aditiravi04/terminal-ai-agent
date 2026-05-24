@@ -18,3 +18,6 @@ class OllamaProvider:
         )
 
         return response.json()["message"]["content"]
+    
+# system supports multi-turn memory i.e. remembers conversation history
+# chat format
