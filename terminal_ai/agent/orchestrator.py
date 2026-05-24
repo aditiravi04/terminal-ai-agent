@@ -1,10 +1,12 @@
 from terminal_ai.llm.ollama_provider import OllamaProvider
 from terminal_ai.tools.registry import TOOLS
+from terminal_ai.memory import retrieve_memories, format_memories, summarize_and_save
 import json
 import re
 
 DECISION_MODEL = "qwen2.5:3b"  # fast, just picks a tool
-ANSWER_MODEL = "qwen2.5:3b"
+ANSWER_MODEL = "qwen2.5:3b"      # fast
+
 # ANSWER_MODEL = "llama3.2"      # full quality for final answer
 
 provider = OllamaProvider()
@@ -15,11 +17,9 @@ def extract_json(text: str) -> str:
     text = re.sub(r"```[a-zA-Z]*\n?", "", text)
     text = text.replace("```", "").strip()
 
-    # Greedy match handles multiline JSON
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
         raw = match.group(0)
-        # Strip characters that are never valid in JSON
         raw = re.sub(r"(?<![\"\\])~", "", raw)
         return raw
 
@@ -34,15 +34,27 @@ def run_chat():
 
     print("\nAI Agent (Tool Mode)\nType 'exit' to quit\n")
 
+    # Track full conversation history for memory summarization at end
+    chat_history = []
+
     while True:
 
         user_input = input("You: ").strip()
 
         if user_input.lower() == "exit":
+            # Summarize and save this session to memory before quitting
+            summarize_and_save(chat_history)
+            print("👋 Goodbye!\n")
             break
 
         # -------------------------
-        # STEP 1: TOOL DECISION (fast model)
+        # STEP 1: RETRIEVE MEMORIES
+        # -------------------------
+        memories = retrieve_memories(user_input)
+        memory_context = format_memories(memories)
+
+        # -------------------------
+        # STEP 2: TOOL DECISION (fast model)
         # -------------------------
         tool_prompt = f"""
 You are a strict AI agent.
@@ -74,13 +86,13 @@ User request: {user_input}
 
         decision = provider.chat(
             [{"role": "user", "content": tool_prompt}],
-            model=DECISION_MODEL  # fast model for tool picking
+            model=DECISION_MODEL
         )
 
         print("\nDEBUG RAW MODEL OUTPUT:\n", decision, "\n")
 
         # -------------------------
-        # STEP 2: PARSE JSON SAFELY
+        # STEP 3: PARSE JSON SAFELY
         # -------------------------
         try:
             cleaned = extract_json(decision)
@@ -98,14 +110,14 @@ User request: {user_input}
             continue
 
         # -------------------------
-        # STEP 3: VALIDATE TOOL NAME
+        # STEP 4: VALIDATE TOOL NAME
         # -------------------------
         if tool not in TOOLS and tool != "none":
             print(f"❌ Invalid tool: '{tool}' — valid options: {list(TOOLS.keys())}\n")
             continue
 
         # -------------------------
-        # STEP 4: AUTO-CORRECT TOOL MISMATCH
+        # STEP 5: AUTO-CORRECT TOOL MISMATCH
         # -------------------------
         if tool == "list_dir" and is_likely_file(tool_input):
             print("⚠️  AI tried to list a file as directory. Switching to read_file.")
@@ -116,7 +128,7 @@ User request: {user_input}
             tool = "list_dir"
 
         # -------------------------
-        # STEP 5: EXECUTE TOOL
+        # STEP 6: EXECUTE TOOL
         # -------------------------
         if tool != "none":
 
@@ -127,9 +139,12 @@ User request: {user_input}
                 continue
 
             # -------------------------
-            # STEP 6: FINAL RESPONSE (full model)
+            # STEP 7: FINAL RESPONSE (full model + memory context)
             # -------------------------
             final_prompt = f"""
+You have the following memory from past conversations with this user:
+{memory_context}
+
 User request: {user_input}
 
 Tool used: {tool}
@@ -138,21 +153,37 @@ Tool input: {tool_input}
 Tool result:
 {result}
 
-Now explain this clearly and helpfully.
-"""
+Use the memory above to personalize your response. Now explain this clearly and helpfully.
+""".strip()
 
             response = provider.chat(
                 [{"role": "user", "content": final_prompt}],
-                model=ANSWER_MODEL  # full model for quality answers
+                model=ANSWER_MODEL
             )
 
             print("\nAI:", response, "\n")
 
         else:
 
+            # -------------------------
+            # STEP 7: DIRECT RESPONSE (full model + memory context)
+            # -------------------------
+            direct_prompt = f"""
+You have the following memory from past conversations with this user:
+{memory_context}
+
+Answer the user's message using the memory above when relevant.
+
+User: {user_input}
+""".strip()
+
             response = provider.chat(
-                [{"role": "user", "content": user_input}],
-                model=ANSWER_MODEL  # full model for quality answers
+                [{"role": "user", "content": direct_prompt}],
+                model=ANSWER_MODEL
             )
 
             print("\nAI:", response, "\n")
+
+        # Track history for end-of-session summarization
+        chat_history.append({"role": "user", "content": user_input})
+        chat_history.append({"role": "assistant", "content": response})
