@@ -1,5 +1,16 @@
+from terminal_ai.llm.ollama_provider import OllamaProvider
+
+
 def main():
-    print("Terminal AI Agent")
+
+    provider = OllamaProvider()
+
+    prompt = input("You: ")
+
+    answer = provider.generate(prompt)
+
+    print("\nAI:")
+    print(answer)
 
 
 if __name__ == "__main__":
